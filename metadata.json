@@ -1,0 +1,5 @@
+{
+  "name": "Aura Agendamento Estético",
+  "description": "Um sistema completo de agendamento de serviços estéticos com integração Supabase, pagamento via Pix e painel administrativo.",
+  "requestFramePermissions": []
+}
