@@ -83,38 +83,6 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
     }
   }, [selectedDate, selectedProfessional, step]);
 
-  // Realtime Listener for Payment Confirmation
-  useEffect(() => {
-    let subscription: any;
-
-    if (step === BookingStep.PAYMENT && createdAppointmentId) {
-      subscription = supabase
-        .channel(`appointment-${createdAppointmentId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'appointments',
-            filter: `id=eq.${createdAppointmentId}`,
-          },
-          (payload) => {
-            const newStatus = payload.new.status;
-            if (newStatus === 'confirmed') {
-              setStep(BookingStep.CONFIRMATION);
-            }
-          }
-        )
-        .subscribe();
-    }
-
-    return () => {
-      if (subscription) {
-        supabase.removeChannel(subscription);
-      }
-    };
-  }, [step, createdAppointmentId]);
-
   const fetchInitialData = async () => {
     setLoading(true);
     const { data: sData } = await supabase.from('services').select('*');
@@ -281,16 +249,24 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
     }
   };
 
-  // Simulation function for Test Mode
-  const simulatePayment = async () => {
+  // Manual Confirmation by User
+  const handleManualConfirmation = async () => {
     if (!createdAppointmentId) return;
     setLoading(true);
-    // Simulate webhook delay
-    setTimeout(async () => {
-      await supabase.from('appointments').update({ status: 'confirmed' }).eq('id', createdAppointmentId);
-      // The realtime listener will pick this up and change step
-      setLoading(false);
-    }, 1500);
+    
+    // Update status to 'pending' so Admin knows the user claims to have paid
+    const { error } = await supabase
+      .from('appointments')
+      .update({ status: 'pending' })
+      .eq('id', createdAppointmentId);
+
+    setLoading(false);
+
+    if (error) {
+      alert('Erro ao confirmar. Tente novamente ou entre em contato pelo WhatsApp.');
+    } else {
+      setStep(BookingStep.CONFIRMATION);
+    }
   };
 
   const renderProgressBar = () => (
@@ -308,11 +284,11 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
         <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
           <Icons.Check className="w-10 h-10" />
         </div>
-        <h2 className="text-3xl font-bold text-slate-800 mb-4">Pagamento Confirmado!</h2>
+        <h2 className="text-3xl font-bold text-slate-800 mb-4">Solicitação Recebida!</h2>
         <p className="text-gray-600 mb-8 max-w-md mx-auto">
-          Seu agendamento para <strong>{selectedService?.name}</strong> foi realizado com sucesso.
+          Recebemos sua confirmação de pagamento para o agendamento de <strong>{selectedService?.name}</strong>.
           <br/><br/>
-          Enviamos os detalhes para seu WhatsApp. Te esperamos lá!
+          Nossa equipe irá verificar o Pix e enviar a confirmação final para seu WhatsApp ({customerPhone}).
         </p>
         <button 
           onClick={() => window.location.reload()}
@@ -491,7 +467,7 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
         </div>
       )}
 
-      {/* Step 4: Payment with Automatic Confirmation */}
+      {/* Step 4: Payment with Manual Confirmation */}
       {step === BookingStep.PAYMENT && selectedService && selectedProfessional && (
         <div className="animate-fade-in">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
@@ -561,12 +537,6 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
                 ) : (
                   <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${selectedService.pix_key}`} alt="Pix QR" className="w-48 h-48" />
                 )}
-                
-                {/* Overlay while checking payment */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 rounded-xl">
-                   <Icons.Loading className="animate-spin w-10 h-10 text-rose-600 mb-2"/>
-                   <span className="text-rose-600 font-bold text-xs animate-pulse">Aguardando Pagamento...</span>
-                </div>
               </div>
               
               <div className="w-full mb-6">
@@ -579,17 +549,13 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
                 </div>
               </div>
 
-              <div className="text-xs text-slate-400 p-2 border border-slate-700 rounded mb-4">
-                 O sistema confirmará seu pagamento automaticamente em alguns instantes.
-              </div>
-
-              {/* SIMULATION BUTTON FOR DEMO PURPOSES */}
+              {/* MANUAL CONFIRMATION BUTTON */}
               <button 
-                onClick={simulatePayment}
+                onClick={handleManualConfirmation}
                 disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-bold text-sm shadow-lg transition opacity-80 hover:opacity-100"
+                className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 flex items-center justify-center gap-2"
               >
-                {loading ? 'Verificando...' : 'Simular Pagamento no Banco (Teste)'}
+                {loading ? <Icons.Loading className="animate-spin w-5 h-5"/> : <><Icons.Check className="w-5 h-5" /> Já fiz o PIX, Confirmar</>}
               </button>
             </div>
           </div>
