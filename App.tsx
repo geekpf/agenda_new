@@ -36,7 +36,7 @@ const LoginScreen: React.FC<{ onLogin: (user: Professional) => void, onCancel: (
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8 relative">
         <button onClick={onCancel} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><Icons.X/></button>
         <div className="flex justify-center mb-6">
@@ -90,9 +90,60 @@ const LoginScreen: React.FC<{ onLogin: (user: Professional) => void, onCancel: (
   );
 };
 
+// Hire System Modal (Sales Pitch)
+const HireModal: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <div className="fixed inset-0 bg-slate-900/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden relative">
+       <button onClick={onClose} className="absolute top-4 right-4 text-white/80 hover:text-white z-10 bg-black/20 rounded-full p-1"><Icons.X className="w-5 h-5"/></button>
+       
+       <div className="bg-gradient-to-br from-rose-600 to-purple-800 p-8 text-white text-center relative overflow-hidden">
+         <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
+         <Icons.Rocket className="w-16 h-16 mx-auto mb-4 text-yellow-300 drop-shadow-lg" />
+         <h2 className="text-3xl font-bold mb-2">Tenha o Aura no seu Negócio</h2>
+         <p className="text-rose-100 text-sm leading-relaxed max-w-xs mx-auto">
+           Automatize agendamentos, receba pagamentos via Pix e organize sua equipe com um sistema profissional.
+         </p>
+       </div>
+
+       <div className="p-8">
+         <ul className="space-y-4 mb-8">
+           <li className="flex items-center gap-3 text-slate-700 font-medium">
+             <div className="bg-green-100 text-green-600 p-1.5 rounded-full"><Icons.Check className="w-4 h-4"/></div> 
+             Agendamento Online 24/7
+           </li>
+           <li className="flex items-center gap-3 text-slate-700 font-medium">
+             <div className="bg-green-100 text-green-600 p-1.5 rounded-full"><Icons.Check className="w-4 h-4"/></div> 
+             Pagamento Pix Automático (Sinal)
+           </li>
+           <li className="flex items-center gap-3 text-slate-700 font-medium">
+             <div className="bg-green-100 text-green-600 p-1.5 rounded-full"><Icons.Check className="w-4 h-4"/></div> 
+             Gestão de Agenda por Profissional
+           </li>
+           <li className="flex items-center gap-3 text-slate-700 font-medium">
+             <div className="bg-green-100 text-green-600 p-1.5 rounded-full"><Icons.Check className="w-4 h-4"/></div> 
+             Sem Mensalidades Abusivas
+           </li>
+         </ul>
+
+         <a 
+           href="https://wa.me/5511999999999?text=Olá,%20vi%20o%20sistema%20Aura%20e%20gostaria%20de%20saber%20mais%20sobre%20como%20contratar%20para%20meu%20negócio." 
+           target="_blank" 
+           rel="noreferrer"
+           className="block w-full bg-[#25D366] hover:bg-[#128C7E] text-white text-center py-4 rounded-xl font-bold text-lg shadow-lg hover:shadow-xl transition transform hover:-translate-y-1 flex items-center justify-center gap-2"
+         >
+           <Icons.WhatsApp className="w-6 h-6" />
+           Contratar via WhatsApp
+         </a>
+         <p className="text-center text-xs text-gray-400 mt-4">Fale diretamente com nosso time de vendas.</p>
+       </div>
+    </div>
+  </div>
+);
+
 function App() {
   const [currentUser, setCurrentUser] = useState<Professional | null>(null);
   const [showLogin, setShowLogin] = useState(false);
+  const [showHireModal, setShowHireModal] = useState(false);
   const [dbReady, setDbReady] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -122,20 +173,33 @@ function App() {
         <AdminDashboard user={currentUser} onLogout={() => setCurrentUser(null)} />
       ) : (
         <>
-          <nav className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-50">
+          <nav className="bg-white border-b border-gray-200 px-4 py-3 sticky top-0 z-40 shadow-sm">
             <div className="max-w-6xl mx-auto flex justify-between items-center">
               <div className="flex items-center gap-2">
                 <div className="bg-rose-600 text-white p-1.5 rounded-lg">
                   <Icons.Service className="w-5 h-5" />
                 </div>
-                <span className="font-bold text-lg tracking-tight text-slate-900">Aura<span className="text-rose-600">.</span></span>
+                <span className="font-bold text-xl tracking-tight text-slate-900">Aura<span className="text-rose-600">.</span></span>
               </div>
-              <button 
-                onClick={() => setShowLogin(true)}
-                className="text-xs font-semibold text-gray-400 hover:text-rose-600 transition flex items-center gap-1"
-              >
-                <Icons.Admin className="w-3 h-3" /> Área Profissional
-              </button>
+              
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => setShowHireModal(true)}
+                  className="hidden md:flex bg-slate-100 text-slate-700 hover:bg-slate-200 px-4 py-2 rounded-full text-xs font-bold transition items-center gap-2 border border-slate-200"
+                >
+                  <Icons.Rocket className="w-3 h-3 text-rose-600" />
+                  Quero esse Sistema
+                </button>
+
+                <div className="h-6 w-px bg-gray-300 hidden md:block"></div>
+
+                <button 
+                  onClick={() => setShowLogin(true)}
+                  className="text-xs font-bold text-slate-600 hover:text-rose-600 transition flex items-center gap-1 px-2 py-1"
+                >
+                  <Icons.Lock className="w-3 h-3" /> Login Profissional
+                </button>
+              </div>
             </div>
           </nav>
 
@@ -146,14 +210,17 @@ function App() {
           <footer className="bg-slate-900 text-slate-400 py-12 px-4 mt-12">
             <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 text-sm">
               <div>
-                <h4 className="text-white font-bold mb-4">Aura Estética</h4>
+                <h4 className="text-white font-bold mb-4 flex items-center gap-2"><Icons.Service className="w-4 h-4 text-rose-500"/> Aura Estética</h4>
                 <p>Revelando sua beleza interior com cuidados profissionais e serviços premium.</p>
+                <button onClick={() => setShowHireModal(true)} className="mt-4 text-rose-400 hover:text-rose-300 text-xs font-bold underline">
+                  Adquira este software para sua empresa
+                </button>
               </div>
               <div>
                 <h4 className="text-white font-bold mb-4">Contato</h4>
-                <p>Rua da Beleza, 123</p>
-                <p>São Paulo, SP 01000-000</p>
-                <p>(11) 99999-9999</p>
+                <p className="flex items-center gap-2"><Icons.Location className="w-3 h-3"/> Rua da Beleza, 123</p>
+                <p className="pl-5">São Paulo, SP 01000-000</p>
+                <p className="flex items-center gap-2 mt-2"><Icons.WhatsApp className="w-3 h-3"/> (11) 99999-9999</p>
               </div>
               <div>
                 <h4 className="text-white font-bold mb-4">Horários</h4>
@@ -162,8 +229,9 @@ function App() {
                 <p>Dom: Fechado</p>
               </div>
             </div>
-            <div className="max-w-6xl mx-auto mt-12 pt-8 border-t border-slate-800 text-center text-xs">
-              © 2024 Aura Estética. Todos os direitos reservados.
+            <div className="max-w-6xl mx-auto mt-12 pt-8 border-t border-slate-800 text-center text-xs flex justify-between items-center">
+              <span>© 2024 Aura Estética. Todos os direitos reservados.</span>
+              <span className="opacity-50">v1.2.0</span>
             </div>
           </footer>
 
@@ -173,6 +241,11 @@ function App() {
               onLogin={(user) => { setCurrentUser(user); setShowLogin(false); }} 
               onCancel={() => setShowLogin(false)} 
             />
+          )}
+
+          {/* Hire System Modal Overlay */}
+          {showHireModal && (
+            <HireModal onClose={() => setShowHireModal(false)} />
           )}
         </>
       )}

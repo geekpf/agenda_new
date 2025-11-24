@@ -16,7 +16,9 @@ import {
   LogOut,
   MapPin,
   Loader2,
-  Lock
+  Lock,
+  Rocket,
+  MessageCircle
 } from 'lucide-react';
 
 export const Icons = {
@@ -36,5 +38,7 @@ export const Icons = {
   Logout: LogOut,
   Location: MapPin,
   Loading: Loader2,
-  Lock
+  Lock,
+  Rocket,
+  WhatsApp: MessageCircle
 };
