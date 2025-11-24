@@ -29,6 +29,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [editingService, setEditingService] = useState<Partial<Service> | null>(null);
   const [selectedProsForService, setSelectedProsForService] = useState<Set<string>>(new Set());
+  const [uploading, setUploading] = useState(false);
 
   // --- PROFESSIONAL MODAL STATE ---
   const [showProModal, setShowProModal] = useState(false);
@@ -70,7 +71,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
         if (data) setServices(data);
       } else {
         // Pro sees only linked services
-        // Supabase doesn't support complex joins in one go easily for this without view, so we do 2 steps
         const { data: rels } = await supabase.from('service_professionals').select('service_id').eq('professional_id', user.id);
         const serviceIds = rels?.map((r: any) => r.service_id) || [];
         
@@ -117,7 +117,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       const ids = new Set<string>(rels?.map((r: any) => r.professional_id) || []);
       setSelectedProsForService(ids);
     } else {
-      setEditingService({ name: '', price: 0, duration_minutes: 60, description: '', pix_key: '', image_url: '' });
+      setEditingService({ name: '', price: 0, duration_minutes: 60, description: '', pix_key: '', image_url: '', pix_qr_url: '' });
       setSelectedProsForService(new Set());
     }
     setShowServiceModal(true);
@@ -128,6 +128,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     if (newSet.has(id)) newSet.delete(id);
     else newSet.add(id);
     setSelectedProsForService(newSet);
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files || event.target.files.length === 0) return;
+    
+    setUploading(true);
+    const file = event.target.files[0];
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random()}.${fileExt}`;
+    const filePath = `qr-codes/${fileName}`;
+
+    try {
+      const { error: uploadError } = await supabase.storage.from('images').upload(filePath, file);
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from('images').getPublicUrl(filePath);
+      
+      setEditingService(prev => {
+        if (!prev) return prev;
+        return { ...prev, pix_qr_url: data.publicUrl };
+      });
+    } catch (error) {
+      alert('Erro ao fazer upload da imagem. Verifique se o bucket "images" existe e é público.');
+      console.error(error);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const saveService = async () => {
@@ -406,31 +433,81 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       {/* --- MODAL: SERVICE (ADD/EDIT) --- */}
       {showServiceModal && editingService && user.is_admin && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-             <div className="bg-slate-900 text-white p-4 flex justify-between items-center sticky top-0">
+           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+             <div className="bg-slate-900 text-white p-4 flex justify-between items-center sticky top-0 z-20 shrink-0">
                <h3 className="font-bold">{editingService.id ? 'Editar Serviço' : 'Novo Serviço'}</h3>
                <button onClick={() => setShowServiceModal(false)}><Icons.X/></button>
              </div>
              <div className="p-6 space-y-4">
-               <div className="grid grid-cols-2 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <input className="border p-2 rounded w-full" placeholder="Nome" value={editingService.name} onChange={e => setEditingService({...editingService, name: e.target.value})} />
                  <input className="border p-2 rounded w-full" type="number" placeholder="Preço (R$)" value={editingService.price} onChange={e => setEditingService({...editingService, price: parseFloat(e.target.value)})} />
                  <input className="border p-2 rounded w-full" type="number" placeholder="Duração (min)" value={editingService.duration_minutes} onChange={e => setEditingService({...editingService, duration_minutes: parseInt(e.target.value)})} />
                  <input className="border p-2 rounded w-full" placeholder="Chave Pix" value={editingService.pix_key} onChange={e => setEditingService({...editingService, pix_key: e.target.value})} />
-                 <input className="border p-2 rounded w-full col-span-2" placeholder="URL da Imagem" value={editingService.image_url} onChange={e => setEditingService({...editingService, image_url: e.target.value})} />
-                 <textarea className="border p-2 rounded w-full col-span-2" placeholder="Descrição" value={editingService.description} onChange={e => setEditingService({...editingService, description: e.target.value})} />
+                 <div className="col-span-1 md:col-span-2">
+                    <label className="block text-xs text-gray-500 mb-1">Capa do Serviço (URL)</label>
+                    <input className="border p-2 rounded w-full" placeholder="URL da Imagem de Capa" value={editingService.image_url} onChange={e => setEditingService({...editingService, image_url: e.target.value})} />
+                 </div>
+                 
+                 {/* QR Code Upload Section - Explicitly Added */}
+                 <div className="col-span-1 md:col-span-2 border-2 border-dashed border-rose-200 p-4 rounded-xl bg-rose-50/50">
+                   <label className="block text-sm font-bold text-rose-800 mb-2 flex items-center gap-2">
+                     <Icons.Upload className="w-4 h-4"/> Imagem do QR Code Pix (Pagamento)
+                   </label>
+                   
+                   <div className="flex flex-col gap-3">
+                     <div className="flex items-center gap-3">
+                        <label className={`cursor-pointer bg-rose-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-rose-700 transition shadow ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                          {uploading ? <Icons.Loading className="animate-spin w-4 h-4"/> : <Icons.Upload className="w-4 h-4"/>}
+                          {uploading ? 'Enviando...' : 'Escolher Arquivo'}
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            onChange={handleFileUpload}
+                            disabled={uploading}
+                            className="hidden"
+                          />
+                        </label>
+                        <span className="text-xs text-gray-500">ou</span>
+                        <input 
+                          className="border p-2 rounded flex-1 text-sm bg-white" 
+                          placeholder="Cole a URL da imagem aqui se preferir" 
+                          value={editingService.pix_qr_url || ''} 
+                          onChange={e => setEditingService(prev => prev ? ({...prev, pix_qr_url: e.target.value}) : null)} 
+                        />
+                     </div>
+                     
+                     {editingService.pix_qr_url && (
+                       <div className="mt-2 flex items-center gap-4 bg-white p-2 rounded border">
+                         <img src={editingService.pix_qr_url} alt="QR Preview" className="w-16 h-16 object-contain border bg-gray-50" />
+                         <div>
+                            <p className="text-xs font-bold text-green-600">Imagem vinculada com sucesso!</p>
+                            <p className="text-xs text-gray-400 break-all line-clamp-1">{editingService.pix_qr_url}</p>
+                         </div>
+                       </div>
+                     )}
+                     {!editingService.pix_qr_url && (
+                        <p className="text-xs text-gray-500 italic">Se nenhuma imagem for enviada, um QR Code genérico será gerado automaticamente baseado na chave Pix.</p>
+                     )}
+                   </div>
+                 </div>
+
+                 <div className="col-span-1 md:col-span-2">
+                    <label className="block text-xs text-gray-500 mb-1">Descrição</label>
+                    <textarea className="border p-2 rounded w-full" placeholder="Detalhes do serviço..." value={editingService.description} onChange={e => setEditingService({...editingService, description: e.target.value})} />
+                 </div>
                </div>
                
                <div className="border-t pt-4">
-                 <h4 className="font-bold mb-3">Profissionais que realizam este serviço:</h4>
-                 <div className="grid grid-cols-2 gap-2">
+                 <h4 className="font-bold mb-3 text-slate-700">Profissionais Habilitados</h4>
+                 <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
                    {professionals.map(p => (
-                     <label key={p.id} className="flex items-center gap-2 p-2 border rounded hover:bg-gray-50 cursor-pointer">
+                     <label key={p.id} className="flex items-center gap-2 p-2 border rounded hover:bg-gray-50 cursor-pointer transition">
                        <input 
                         type="checkbox" 
                         checked={selectedProsForService.has(p.id)} 
                         onChange={() => toggleProSelection(p.id)}
-                        className="w-4 h-4 accent-rose-600"
+                        className="w-4 h-4 accent-rose-600 rounded"
                        />
                        <span className="text-sm">{p.name}</span>
                      </label>
@@ -438,9 +515,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
                  </div>
                </div>
              </div>
-             <div className="p-4 border-t flex justify-end gap-2 bg-gray-50">
-               <button onClick={() => setShowServiceModal(false)} className="px-4 py-2 text-gray-600">Cancelar</button>
-               <button onClick={saveService} disabled={saving} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold">{saving ? 'Salvando...' : 'Salvar'}</button>
+             <div className="p-4 border-t flex justify-end gap-2 bg-gray-50 sticky bottom-0 rounded-b-2xl">
+               <button onClick={() => setShowServiceModal(false)} className="px-4 py-2 text-gray-600 font-medium hover:text-gray-800">Cancelar</button>
+               <button onClick={saveService} disabled={saving} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-rose-700 transition shadow-lg">{saving ? 'Salvando...' : 'Salvar Serviço'}</button>
              </div>
            </div>
         </div>

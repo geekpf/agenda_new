@@ -12,6 +12,7 @@ create table if not exists services (
   price numeric not null,
   pix_key text,
   image_url text,
+  pix_qr_url text, -- New Column for QR Code Image
   category text default 'Geral'
 );
 
@@ -92,23 +93,17 @@ on conflict do nothing;
 -- Create Professionals
 -- Admin User
 insert into professionals (name, role, bio, photo_url, email, password, is_admin) values
-('Administrador', 'Gerente', 'Gerente do sistema', 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', 'admin@aura.com', 'admin', true);
+('Administrador', 'Gerente', 'Gerente do sistema', 'https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff', 'admin@aura.com', 'admin', true)
+on conflict (email) do nothing;
 
 -- Regular Pros
 insert into professionals (name, role, bio, photo_url, email, password, is_admin) values
 ('Alice Silva', 'Cabeleireira', 'Especialista em cortes modernos.', 'https://picsum.photos/200/200?random=4', 'alice@aura.com', '123456', false),
 ('Bruno Santos', 'Massoterapeuta', 'Massagem terapêutica certificada.', 'https://picsum.photos/200/200?random=5', 'bruno@aura.com', '123456', false),
-('Carla Dias', 'Manicure', 'Nail designer premiada.', 'https://picsum.photos/200/200?random=6', 'carla@aura.com', '123456', false);
+('Carla Dias', 'Manicure', 'Nail designer premiada.', 'https://picsum.photos/200/200?random=6', 'carla@aura.com', '123456', false)
+on conflict (email) do nothing;
 
--- Link Services to Professionals (Note: IDs are dynamic, this is logic for reference, usually ran manually or via specific lookup if UUIDs known)
--- Since UUIDs are random, this block in real SQL editor should be run carefully.
--- For this setup guide, we use subqueries which work if names are unique.
-insert into service_professionals (service_id, professional_id) 
-select s.id, p.id from services s, professionals p where s.name = 'Corte Premium' and p.name = 'Alice Silva';
-
-insert into service_professionals (service_id, professional_id) 
-select s.id, p.id from services s, professionals p where s.name = 'Massagem Relaxante' and p.name = 'Bruno Santos';
-
-insert into service_professionals (service_id, professional_id) 
-select s.id, p.id from services s, professionals p where s.name = 'Manicure em Gel' and p.name = 'Carla Dias';
+-- Note on Storage:
+-- Please create a Storage Bucket named 'images' in your Supabase Dashboard and make it Public.
+-- This SQL cannot create storage buckets automatically.
 `;

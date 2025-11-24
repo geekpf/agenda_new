@@ -18,7 +18,8 @@ import {
   Loader2,
   Lock,
   Rocket,
-  MessageCircle
+  MessageCircle,
+  Upload
 } from 'lucide-react';
 
 export const Icons = {
@@ -40,5 +41,6 @@ export const Icons = {
   Loading: Loader2,
   Lock,
   Rocket,
-  WhatsApp: MessageCircle
+  WhatsApp: MessageCircle,
+  Upload
 };

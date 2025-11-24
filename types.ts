@@ -6,6 +6,7 @@ export interface Service {
   price: number;
   pix_key: string;
   image_url: string;
+  pix_qr_url?: string; // New field for custom QR Code image
   category: string;
 }
 
@@ -49,8 +50,9 @@ export enum BookingStep {
   SELECT_SERVICE = 0,
   SELECT_PROFESSIONAL = 1,
   SELECT_DATE = 2,
-  REVIEW = 3,
-  CONFIRMATION = 4,
+  USER_DETAILS = 3, // New Step
+  PAYMENT = 4,      // Previously REVIEW
+  CONFIRMATION = 5,
 }
 
 export const DAYS_OF_WEEK = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
