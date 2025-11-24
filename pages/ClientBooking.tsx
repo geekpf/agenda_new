@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Service, Professional, Availability, BookingStep, DAYS_OF_WEEK, Appointment } from '../types';
 import { Icons } from '../components/Icons';
@@ -64,6 +65,10 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
   
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  
+  // Payment Flow State
+  const [createdAppointmentId, setCreatedAppointmentId] = useState<string | null>(null);
+  
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -77,6 +82,38 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
       fetchExistingAppointments();
     }
   }, [selectedDate, selectedProfessional, step]);
+
+  // Realtime Listener for Payment Confirmation
+  useEffect(() => {
+    let subscription: any;
+
+    if (step === BookingStep.PAYMENT && createdAppointmentId) {
+      subscription = supabase
+        .channel(`appointment-${createdAppointmentId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'appointments',
+            filter: `id=eq.${createdAppointmentId}`,
+          },
+          (payload) => {
+            const newStatus = payload.new.status;
+            if (newStatus === 'confirmed') {
+              setStep(BookingStep.CONFIRMATION);
+            }
+          }
+        )
+        .subscribe();
+    }
+
+    return () => {
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+    };
+  }, [step, createdAppointmentId]);
 
   const fetchInitialData = async () => {
     setLoading(true);
@@ -183,7 +220,8 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
     return [];
   };
 
-  const handleBooking = async () => {
+  // Called when clicking "Ir para Pagamento"
+  const initiateBooking = async () => {
     if (!selectedService || !selectedProfessional || !selectedTimeSlot) return;
     
     setLoading(true);
@@ -212,31 +250,47 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
 
     if (conflicts && conflicts.length > 0) {
       setError('Desculpe, este horário acabou de ser reservado por outro cliente. Por favor, escolha outro horário.');
-      // Refresh slots to hide the taken one
       await fetchExistingAppointments();
       setSelectedTimeSlot(null);
       setLoading(false);
       return;
     }
 
-    // --- PROCEED WITH BOOKING ---
-    const { error: bookingError } = await supabase.from('appointments').insert({
-      service_id: selectedService.id,
-      professional_id: selectedProfessional.id,
-      customer_name: customerName,
-      customer_phone: customerPhone,
-      start_time: startDate.toISOString(),
-      end_time: endDate.toISOString(),
-      status: 'pending' // pending until confirmed
-    });
+    // --- CREATE PENDING APPOINTMENT ---
+    const { data: newApp, error: bookingError } = await supabase
+      .from('appointments')
+      .insert({
+        service_id: selectedService.id,
+        professional_id: selectedProfessional.id,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        start_time: startDate.toISOString(),
+        end_time: endDate.toISOString(),
+        status: 'waiting_payment' // Initial status
+      })
+      .select()
+      .single();
 
     setLoading(false);
 
-    if (bookingError) {
-      setError('Falha ao criar agendamento. Por favor, tente novamente.');
+    if (bookingError || !newApp) {
+      setError('Falha ao iniciar agendamento. Por favor, tente novamente.');
     } else {
-      setStep(BookingStep.CONFIRMATION);
+      setCreatedAppointmentId(newApp.id);
+      setStep(BookingStep.PAYMENT);
     }
+  };
+
+  // Simulation function for Test Mode
+  const simulatePayment = async () => {
+    if (!createdAppointmentId) return;
+    setLoading(true);
+    // Simulate webhook delay
+    setTimeout(async () => {
+      await supabase.from('appointments').update({ status: 'confirmed' }).eq('id', createdAppointmentId);
+      // The realtime listener will pick this up and change step
+      setLoading(false);
+    }, 1500);
   };
 
   const renderProgressBar = () => (
@@ -254,11 +308,11 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
         <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
           <Icons.Check className="w-10 h-10" />
         </div>
-        <h2 className="text-3xl font-bold text-slate-800 mb-4">Solicitação Enviada!</h2>
+        <h2 className="text-3xl font-bold text-slate-800 mb-4">Pagamento Confirmado!</h2>
         <p className="text-gray-600 mb-8 max-w-md mx-auto">
-          Seu pedido de agendamento para <strong>{selectedService?.name}</strong> com <strong>{selectedProfessional?.name}</strong> foi enviado. 
+          Seu agendamento para <strong>{selectedService?.name}</strong> foi realizado com sucesso.
           <br/><br/>
-          <strong>Por favor, envie o comprovante do Pix no nosso WhatsApp para que possamos confirmar seu horário definitivamente.</strong>
+          Enviamos os detalhes para seu WhatsApp. Te esperamos lá!
         </p>
         <button 
           onClick={() => window.location.reload()}
@@ -274,9 +328,9 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
     <div className="max-w-4xl mx-auto p-4 md:p-8 bg-white min-h-[600px] rounded-2xl shadow-xl">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-slate-800">
-          {step === BookingStep.PAYMENT ? 'Pagamento' : 'Agende seu Horário'}
+          {step === BookingStep.PAYMENT ? 'Pagamento Pix' : 'Agende seu Horário'}
         </h1>
-        {step > 0 && (
+        {step > 0 && step !== BookingStep.PAYMENT && (
           <button 
             onClick={() => setStep(step - 1)}
             className="text-gray-500 hover:text-rose-600 flex items-center gap-1 text-sm font-medium"
@@ -397,7 +451,7 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
         </div>
       )}
 
-      {/* Step 3: User Details (NEW) */}
+      {/* Step 3: User Details (Collects info then initiates booking) */}
       {step === BookingStep.USER_DETAILS && (
         <div className="animate-fade-in max-w-lg mx-auto">
           <h3 className="font-bold text-slate-800 mb-6 text-xl text-center">Informe seus dados para contato</h3>
@@ -424,18 +478,20 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
               <p className="text-xs text-gray-400 mt-1">Enviaremos a confirmação e lembretes para este número.</p>
             </div>
 
+            {error && <div className="text-red-500 bg-red-50 p-2 rounded text-center">{error}</div>}
+
             <button 
-              onClick={() => setStep(BookingStep.PAYMENT)}
-              disabled={!customerName || !customerPhone}
+              onClick={initiateBooking}
+              disabled={!customerName || !customerPhone || loading}
               className="w-full bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-rose-700 text-white px-8 py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition shadow-lg mt-4"
             >
-              Ir para Pagamento <Icons.Next className="w-4 h-4" />
+              {loading ? <Icons.Loading className="animate-spin" /> : <><Icons.Next className="w-4 h-4" /> Ir para Pagamento</>}
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 4: Payment & Review (Modified) */}
+      {/* Step 4: Payment with Automatic Confirmation */}
       {step === BookingStep.PAYMENT && selectedService && selectedProfessional && (
         <div className="animate-fade-in">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
@@ -493,18 +549,24 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
               <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-rose-500 to-purple-600"></div>
               
               <h4 className="font-bold text-2xl text-white mb-2 flex items-center gap-2 mt-2">
-                <Icons.Money className="w-6 h-6 text-yellow-400"/> Pagamento do Sinal
+                <Icons.Money className="w-6 h-6 text-yellow-400"/> Pagamento Pix
               </h4>
               <p className="text-slate-400 text-sm mb-6 max-w-xs">
-                Para garantir seu horário, efetue o pagamento do sinal de <strong>{formatBRL(selectedService.price / 2)}</strong> via Pix.
+                Escaneie o QR Code abaixo para pagar o sinal de <strong>{formatBRL(selectedService.price / 2)}</strong>.
               </p>
               
-              <div className="bg-white p-3 rounded-xl mb-6 shadow-inner">
+              <div className="bg-white p-3 rounded-xl mb-6 shadow-inner relative">
                 {selectedService.pix_qr_url ? (
                   <img src={selectedService.pix_qr_url} alt="Pix QR" className="w-48 h-48 object-contain" />
                 ) : (
                   <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${selectedService.pix_key}`} alt="Pix QR" className="w-48 h-48" />
                 )}
+                
+                {/* Overlay while checking payment */}
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 rounded-xl">
+                   <Icons.Loading className="animate-spin w-10 h-10 text-rose-600 mb-2"/>
+                   <span className="text-rose-600 font-bold text-xs animate-pulse">Aguardando Pagamento...</span>
+                </div>
               </div>
               
               <div className="w-full mb-6">
@@ -517,22 +579,20 @@ export const ClientBooking: React.FC<Props> = ({ onSuccess }) => {
                 </div>
               </div>
 
-              <div className="text-xs text-slate-500 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-                <p>Após o pagamento, clique no botão abaixo para finalizar a reserva.</p>
+              <div className="text-xs text-slate-400 p-2 border border-slate-700 rounded mb-4">
+                 O sistema confirmará seu pagamento automaticamente em alguns instantes.
               </div>
+
+              {/* SIMULATION BUTTON FOR DEMO PURPOSES */}
+              <button 
+                onClick={simulatePayment}
+                disabled={loading}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-bold text-sm shadow-lg transition opacity-80 hover:opacity-100"
+              >
+                {loading ? 'Verificando...' : 'Simular Pagamento no Banco (Teste)'}
+              </button>
             </div>
           </div>
-
-          {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg mb-4 text-sm font-bold border border-red-200 text-center">{error}</div>}
-
-          <button 
-            onClick={handleBooking}
-            disabled={loading}
-            className="w-full bg-green-600 hover:bg-green-700 text-white py-4 rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl transition transform hover:-translate-y-1 flex items-center justify-center gap-2"
-          >
-            {loading ? <Icons.Loading className="animate-spin"/> : <Icons.Check className="w-6 h-6"/>}
-            {loading ? 'Processando...' : 'Já fiz o Pix, Confirmar Agendamento'}
-          </button>
         </div>
       )}
     </div>

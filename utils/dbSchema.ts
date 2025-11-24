@@ -1,3 +1,4 @@
+
 export const REQUIRED_SQL = `
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
@@ -56,8 +57,9 @@ create table if not exists appointments (
   customer_phone text not null,
   start_time timestamp with time zone not null,
   end_time timestamp with time zone not null,
-  status text default 'pending', -- pending, confirmed, rejected, cancelled
-  notes text
+  status text default 'pending', -- pending, waiting_payment, confirmed, rejected, cancelled
+  notes text,
+  payment_id text
 );
 
 -- RLS Policies

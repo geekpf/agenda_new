@@ -28,7 +28,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
   // --- SERVICE MODAL STATE ---
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [editingService, setEditingService] = useState<Partial<Service> | null>(null);
-  const [selectedProsForService, setSelectedProsForService] = useState<Set<string>>(new Set());
+  const [selectedProsForService, setSelectedProsForService] = useState<Set<string>>(new Set<string>());
   const [uploading, setUploading] = useState(false);
 
   // --- PROFESSIONAL MODAL STATE ---
@@ -52,136 +52,118 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
       let query = supabase
         .from('appointments')
         .select(`*, services (name), professionals (name)`)
-        .order('start_time', { ascending: true });
-      
-      // RBAC: If not admin, only show own appointments
+        .order('start_time', { ascending: false });
+
       if (!user.is_admin) {
         query = query.eq('professional_id', user.id);
       }
 
       const { data } = await query;
       if (data) setAppointments(data as any);
-    } 
+    }
     
     // --- FETCH SERVICES ---
-    else if (activeTab === 'services') {
-      if (user.is_admin) {
-        // Admin sees all
-        const { data } = await supabase.from('services').select('*').order('created_at');
-        if (data) setServices(data);
-      } else {
-        // Pro sees only linked services
-        const { data: rels } = await supabase.from('service_professionals').select('service_id').eq('professional_id', user.id);
-        const serviceIds = rels?.map((r: any) => r.service_id) || [];
-        
-        if (serviceIds.length > 0) {
-          const { data } = await supabase.from('services').select('*').in('id', serviceIds);
-          if (data) setServices(data);
-        } else {
-          setServices([]);
-        }
-      }
-    } 
-    
-    // --- FETCH PROFESSIONALS ---
-    else if (activeTab === 'professionals') {
-      if (user.is_admin) {
-        const { data } = await supabase.from('professionals').select('*');
-        if (data) setProfessionals(data);
-      }
+    if (activeTab === 'services' || activeTab === 'appointments') {
+      const { data } = await supabase.from('services').select('*').order('name');
+      if (data) setServices(data);
     }
+
+    // --- FETCH PROFESSIONALS (Needed for filters and linking) ---
+    const { data: proData } = await supabase.from('professionals').select('*').order('name');
+    if (proData) setProfessionals(proData);
+
     setLoading(false);
   };
 
-  // --- APPOINTMENT ACTIONS ---
-  const updateStatus = async (id: string, status: string) => {
+  // --- ACTION HANDLERS ---
+
+  const handleUpdateStatus = async (id: string, status: string) => {
     await supabase.from('appointments').update({ status }).eq('id', id);
     fetchData();
   };
 
-  // --- SERVICE MANAGEMENT (Admin Only) ---
-  const openServiceModal = async (service: Service | null) => {
-    if (!user.is_admin) return; // Guard
+  const handleDelete = async (table: string, id: string) => {
+    if (window.confirm('Tem certeza que deseja excluir?')) {
+      await supabase.from(table).delete().eq('id', id);
+      fetchData();
+    }
+  };
 
-    // Need all professionals to populate checkbox list
-    const { data: allPros } = await supabase.from('professionals').select('*');
-    if (allPros) setProfessionals(allPros);
+  // --- SERVICE MANAGEMENT ---
 
+  const openServiceModal = async (service?: Service) => {
     if (service) {
       setEditingService(service);
-      const { data: rels } = await supabase
+      // Fetch relationships
+      const { data } = await supabase
         .from('service_professionals')
         .select('professional_id')
         .eq('service_id', service.id);
       
-      const ids = new Set<string>(rels?.map((r: any) => r.professional_id) || []);
+      const ids = new Set<string>((data || []).map((item: any) => item.professional_id));
       setSelectedProsForService(ids);
     } else {
-      setEditingService({ name: '', price: 0, duration_minutes: 60, description: '', pix_key: '', image_url: '', pix_qr_url: '' });
-      setSelectedProsForService(new Set());
+      setEditingService({
+        name: '', description: '', duration_minutes: 60, price: 0, 
+        pix_key: '', image_url: '', pix_qr_url: '', category: 'Geral'
+      });
+      setSelectedProsForService(new Set<string>());
     }
     setShowServiceModal(true);
   };
 
-  const toggleProSelection = (id: string) => {
-    const newSet = new Set(selectedProsForService);
-    if (newSet.has(id)) newSet.delete(id);
-    else newSet.add(id);
-    setSelectedProsForService(newSet);
-  };
-
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files || event.target.files.length === 0) return;
-    
-    setUploading(true);
-    const file = event.target.files[0];
+  const handleQrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
     const fileExt = file.name.split('.').pop();
     const fileName = `${Math.random()}.${fileExt}`;
     const filePath = `qr-codes/${fileName}`;
 
+    setUploading(true);
     try {
-      const { error: uploadError } = await supabase.storage.from('images').upload(filePath, file);
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(filePath, file);
+
       if (uploadError) throw uploadError;
 
       const { data } = supabase.storage.from('images').getPublicUrl(filePath);
-      
-      setEditingService(prev => {
-        if (!prev) return prev;
-        return { ...prev, pix_qr_url: data.publicUrl };
-      });
+      setEditingService(prev => ({ ...prev, pix_qr_url: data.publicUrl }));
     } catch (error) {
-      alert('Erro ao fazer upload da imagem. Verifique se o bucket "images" existe e é público.');
-      console.error(error);
+      alert('Erro ao fazer upload. Verifique se o Bucket "images" existe e é público.');
     } finally {
       setUploading(false);
     }
   };
 
-  const saveService = async () => {
+  const handleSaveService = async () => {
     if (!editingService?.name) return;
     setSaving(true);
-    
-    const { data: savedService, error } = await supabase
+
+    // 1. Upsert Service
+    const { data, error } = await supabase
       .from('services')
       .upsert(editingService)
       .select()
       .single();
 
-    if (error) {
+    if (error || !data) {
       alert('Erro ao salvar serviço');
       setSaving(false);
       return;
     }
 
-    if (savedService) {
-      await supabase.from('service_professionals').delete().eq('service_id', savedService.id);
-      const relations = Array.from(selectedProsForService).map(pid => ({
-        service_id: savedService.id,
-        professional_id: pid
-      }));
-      if (relations.length > 0) {
-        await supabase.from('service_professionals').insert(relations);
-      }
+    // 2. Update Relationships (Delete all, then Insert selected)
+    const serviceId = data.id;
+    await supabase.from('service_professionals').delete().eq('service_id', serviceId);
+
+    const relations = Array.from(selectedProsForService).map(proId => ({
+      service_id: serviceId,
+      professional_id: proId
+    }));
+
+    if (relations.length > 0) {
+      await supabase.from('service_professionals').insert(relations);
     }
 
     setSaving(false);
@@ -189,24 +171,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     fetchData();
   };
 
-  const deleteService = async (id: string) => {
-    if (confirm('Tem certeza que deseja excluir este serviço?')) {
-      await supabase.from('services').delete().eq('id', id);
-      fetchData();
-    }
-  };
+  // --- PROFESSIONAL MANAGEMENT ---
 
-  // --- PROFESSIONAL MANAGEMENT (Admin Only) ---
-  const openProModal = (pro: Professional | null) => {
-    if (pro) {
-      setEditingProProfile(pro);
-    } else {
-      setEditingProProfile({ name: '', role: '', bio: '', photo_url: '', email: '', password: '123' });
-    }
+  const openProModal = (pro?: Professional) => {
+    setEditingProProfile(pro || { name: '', role: '', bio: '', photo_url: '', email: '', password: '', is_admin: false });
     setShowProModal(true);
   };
 
-  const saveProProfile = async () => {
+  const handleSavePro = async () => {
     if (!editingProProfile?.name) return;
     setSaving(true);
     await supabase.from('professionals').upsert(editingProProfile);
@@ -215,378 +187,519 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }
     fetchData();
   };
 
-   const deletePro = async (id: string) => {
-    if (confirm('Tem certeza? Isso excluirá também a agenda e histórico.')) {
-      await supabase.from('professionals').delete().eq('id', id);
-      fetchData();
-    }
-  };
-
   // --- SCHEDULE MANAGEMENT ---
-  const openScheduleEditor = async (pro: Professional) => {
+
+  const openScheduleModal = async (pro: Professional) => {
     setEditingProSchedule(pro);
     setLoading(true);
+    // Fetch existing availability
+    const { data } = await supabase.from('availability').select('*').eq('professional_id', pro.id);
     
-    const { data: existing } = await supabase.from('availability').select('*').eq('professional_id', pro.id);
-
-    const days: Partial<Availability>[] = [];
+    // Initialize form for all 7 days
+    const form: Partial<Availability>[] = [];
     for (let i = 0; i < 7; i++) {
-      const existingDay = existing?.find(d => d.day_of_week === i);
-      if (existingDay) {
-        days.push({ ...existingDay, time_slots: existingDay.time_slots || [] });
-      } else {
-        days.push({ professional_id: pro.id, day_of_week: i, time_slots: [], is_available: false });
-      }
+      const existing = data?.find(d => d.day_of_week === i);
+      form.push(existing || {
+        professional_id: pro.id,
+        day_of_week: i,
+        is_available: false,
+        time_slots: []
+      });
     }
-    setScheduleForm(days);
+    setScheduleForm(form);
     setLoading(false);
   };
 
-  const toggleDayAvailability = (index: number) => {
-    const newSchedule = [...scheduleForm];
-    newSchedule[index].is_available = !newSchedule[index].is_available;
-    setScheduleForm(newSchedule);
-  };
-
-  const toggleTimeSlot = (dayIndex: number, slot: string) => {
-    const newSchedule = [...scheduleForm];
-    const currentSlots = newSchedule[dayIndex].time_slots || [];
+  const toggleSlot = (dayIndex: number, time: string) => {
+    const newForm = [...scheduleForm];
+    const day = newForm[dayIndex];
+    if (!day.time_slots) day.time_slots = [];
     
-    if (currentSlots.includes(slot)) {
-      newSchedule[dayIndex].time_slots = currentSlots.filter(s => s !== slot);
+    if (day.time_slots.includes(time)) {
+      day.time_slots = day.time_slots.filter(t => t !== time);
     } else {
-      newSchedule[dayIndex].time_slots = [...currentSlots, slot].sort();
+      day.time_slots.push(time);
     }
-    
-    if (newSchedule[dayIndex].time_slots?.length && newSchedule[dayIndex].time_slots.length > 0) {
-      newSchedule[dayIndex].is_available = true;
-    }
-    setScheduleForm(newSchedule);
+    setScheduleForm(newForm);
   };
 
-  const saveSchedule = async () => {
-    if (!editingProSchedule) return;
+  const handleSaveSchedule = async () => {
     setSaving(true);
-    const updates = scheduleForm.map(day => ({
-      professional_id: editingProSchedule.id,
-      day_of_week: day.day_of_week,
-      time_slots: day.time_slots,
-      is_available: day.is_available
+    // Upsert all days
+    const updates = scheduleForm.map(item => ({
+      professional_id: editingProSchedule!.id,
+      day_of_week: item.day_of_week,
+      is_available: item.is_available,
+      time_slots: item.time_slots
     }));
-
+    
     await supabase.from('availability').upsert(updates, { onConflict: 'professional_id,day_of_week' });
     setSaving(false);
     setEditingProSchedule(null);
   };
 
   return (
-    <div className="bg-gray-100 min-h-screen">
+    <div className="min-h-screen bg-slate-50">
       {/* Header */}
-      <header className="bg-slate-900 text-white p-4 shadow-lg sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3">
-             <div className="bg-rose-600 p-2 rounded-lg"><Icons.Admin className="w-5 h-5" /></div>
-             <div>
-               <h1 className="text-xl font-bold leading-none">Painel Administrativo</h1>
-               <p className="text-xs text-slate-400">Olá, {user.name} ({user.is_admin ? 'Admin' : 'Profissional'})</p>
-             </div>
+      <header className="bg-white shadow-sm sticky top-0 z-30">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <div className="bg-slate-900 text-white p-2 rounded-lg">
+              <Icons.Admin className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="font-bold text-slate-900 leading-tight">Painel Administrativo</h1>
+              <p className="text-xs text-slate-500">Olá, {user.name} ({user.is_admin ? 'Admin' : 'Profissional'})</p>
+            </div>
           </div>
-          <div className="flex gap-4 items-center">
-            <nav className="flex gap-2">
-              <button onClick={() => setActiveTab('appointments')} className={`px-3 py-1 rounded-md text-sm font-medium transition ${activeTab === 'appointments' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>Agendamentos</button>
-              
-              <button onClick={() => setActiveTab('services')} className={`px-3 py-1 rounded-md text-sm font-medium transition ${activeTab === 'services' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
-                {user.is_admin ? 'Serviços' : 'Meus Serviços'}
+          <button 
+            onClick={onLogout}
+            className="flex items-center gap-2 text-sm font-bold text-rose-600 hover:text-rose-700 bg-rose-50 px-4 py-2 rounded-full transition"
+          >
+            <Icons.Logout className="w-4 h-4" /> Sair
+          </button>
+        </div>
+        
+        {/* Navigation Tabs */}
+        <div className="flex justify-center border-t border-gray-100 bg-white">
+          <nav className="flex gap-8">
+            <button 
+              onClick={() => setActiveTab('appointments')}
+              className={`py-4 px-2 text-sm font-bold border-b-2 transition ${activeTab === 'appointments' ? 'border-rose-600 text-rose-600' : 'border-transparent text-gray-500 hover:text-slate-800'}`}
+            >
+              Agendamentos
+            </button>
+            <button 
+              onClick={() => setActiveTab('services')}
+              className={`py-4 px-2 text-sm font-bold border-b-2 transition ${activeTab === 'services' ? 'border-rose-600 text-rose-600' : 'border-transparent text-gray-500 hover:text-slate-800'}`}
+            >
+              Serviços
+            </button>
+            {user.is_admin && (
+              <button 
+                onClick={() => setActiveTab('professionals')}
+                className={`py-4 px-2 text-sm font-bold border-b-2 transition ${activeTab === 'professionals' ? 'border-rose-600 text-rose-600' : 'border-transparent text-gray-500 hover:text-slate-800'}`}
+              >
+                Equipe
               </button>
-              
-              {user.is_admin && (
-                <button onClick={() => setActiveTab('professionals')} className={`px-3 py-1 rounded-md text-sm font-medium transition ${activeTab === 'professionals' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>Equipe</button>
-              )}
-            </nav>
-            <div className="h-6 w-px bg-slate-700 mx-2"></div>
-            <button onClick={onLogout} className="text-rose-500 hover:text-rose-400" title="Sair"><Icons.Logout className="w-5 h-5"/></button>
-          </div>
+            )}
+          </nav>
         </div>
       </header>
 
-      {/* SUB-HEADER FOR NON-ADMINS TO MANAGE SCHEDULE */}
-      {!user.is_admin && (
-        <div className="bg-white border-b p-4 text-center">
-          <button 
-            onClick={() => openScheduleEditor(user)}
-            className="bg-slate-800 text-white px-6 py-2 rounded-full font-bold shadow hover:bg-slate-700 transition flex items-center gap-2 mx-auto"
-          >
-            <Icons.Clock className="w-4 h-4" /> Gerenciar Minha Disponibilidade
-          </button>
-        </div>
-      )}
-
-      <main className="max-w-6xl mx-auto p-4 md:p-8">
-        {loading && !showServiceModal && !showProModal && !editingProSchedule && <div className="text-center py-8"><Icons.Loading className="animate-spin w-8 h-8 mx-auto text-rose-600"/></div>}
-
+      <main className="max-w-6xl mx-auto px-4 py-8">
+        
         {/* --- APPOINTMENTS TAB --- */}
-        {!loading && activeTab === 'appointments' && (
-          <div className="space-y-4">
-             <div className="flex justify-between items-end mb-4">
-               <h2 className="text-2xl font-bold text-slate-800">Agendamentos</h2>
-               <span className="text-sm text-gray-500">{appointments.length} encontrados</span>
+        {activeTab === 'appointments' && (
+          <div className="animate-fade-in">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-slate-800">Próximos Agendamentos</h2>
+              <button onClick={() => fetchData()} className="text-rose-600 hover:bg-rose-50 p-2 rounded-full"><Icons.Loading className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} /></button>
             </div>
-            {appointments.length === 0 && <p className="text-center text-gray-500 py-12">Nenhum agendamento encontrado.</p>}
-            {appointments.map(app => (
-              <div key={app.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                      app.status === 'confirmed' ? 'bg-green-100 text-green-700' :
-                      app.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                      app.status === 'cancelled' ? 'bg-gray-100 text-gray-600' :
-                      'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {app.status === 'confirmed' ? 'Confirmado' : app.status === 'rejected' ? 'Rejeitado' : app.status === 'cancelled' ? 'Cancelado' : 'Pendente'}
-                    </span>
-                    <span className="text-sm text-gray-500">{formatDate(app.start_time)}</span>
-                  </div>
-                  <h3 className="font-bold text-lg">{app.services?.name}</h3>
-                  <p className="text-gray-600 text-sm">Cliente: <b>{app.customer_name}</b> ({app.customer_phone})</p>
-                  <p className="text-gray-500 text-xs">Profissional: {app.professionals?.name}</p>
+            
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              {appointments.length === 0 ? (
+                <div className="p-12 text-center text-gray-400">Nenhum agendamento encontrado.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-50 border-b border-gray-200">
+                      <tr>
+                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Cliente</th>
+                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Serviço/Profissional</th>
+                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Data/Hora</th>
+                        <th className="p-4 text-xs font-bold text-gray-500 uppercase">Status</th>
+                        <th className="p-4 text-xs font-bold text-gray-500 uppercase text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {appointments.map(app => (
+                        <tr key={app.id} className="hover:bg-gray-50 transition">
+                          <td className="p-4">
+                            <div className="font-bold text-slate-800">{app.customer_name}</div>
+                            <div className="text-xs text-gray-500">{app.customer_phone}</div>
+                          </td>
+                          <td className="p-4">
+                            <div className="text-sm font-medium text-slate-700">{app.services?.name}</div>
+                            <div className="text-xs text-gray-500">{app.professionals?.name}</div>
+                          </td>
+                          <td className="p-4">
+                            <div className="text-sm text-slate-700 font-medium">{formatDate(app.start_time).split(',')[0]}</div>
+                            <div className="text-xs text-gray-500">{formatDate(app.start_time).split(',')[1]}</div>
+                          </td>
+                          <td className="p-4">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                              ${app.status === 'confirmed' ? 'bg-green-100 text-green-800' : 
+                                app.status === 'cancelled' || app.status === 'rejected' ? 'bg-red-100 text-red-800' : 
+                                app.status === 'waiting_payment' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-blue-100 text-blue-800'}`}>
+                              {app.status === 'waiting_payment' ? 'Aguardando Pagamento' : 
+                               app.status === 'confirmed' ? 'Confirmado' :
+                               app.status === 'pending' ? 'Pendente' :
+                               app.status === 'cancelled' ? 'Cancelado' : 'Rejeitado'}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right space-x-2">
+                            {app.status !== 'confirmed' && app.status !== 'cancelled' && (
+                              <button onClick={() => handleUpdateStatus(app.id, 'confirmed')} className="text-green-600 hover:bg-green-50 p-1 rounded" title="Confirmar"><Icons.Check className="w-5 h-5"/></button>
+                            )}
+                            {app.status !== 'rejected' && app.status !== 'cancelled' && (
+                              <button onClick={() => handleUpdateStatus(app.id, 'rejected')} className="text-red-600 hover:bg-red-50 p-1 rounded" title="Rejeitar"><Icons.X className="w-5 h-5"/></button>
+                            )}
+                            {app.status === 'confirmed' && (
+                              <button onClick={() => handleUpdateStatus(app.id, 'cancelled')} className="text-gray-400 hover:text-red-600 p-1" title="Cancelar"><Icons.X className="w-5 h-5"/></button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="flex gap-2 items-center">
-                  {/* Both Admin and Pro can confirm/reject their own appointments */}
-                  {app.status === 'pending' && (
-                    <>
-                      <button onClick={() => updateStatus(app.id, 'confirmed')} className="bg-green-600 text-white px-3 py-2 rounded text-sm font-bold flex items-center gap-1"><Icons.Check className="w-4 h-4"/> Confirmar</button>
-                      <button onClick={() => updateStatus(app.id, 'rejected')} className="bg-red-100 text-red-700 px-3 py-2 rounded text-sm font-bold flex items-center gap-1"><Icons.X className="w-4 h-4"/> Rejeitar</button>
-                    </>
-                  )}
-                  {app.status === 'confirmed' && <button onClick={() => updateStatus(app.id, 'cancelled')} className="bg-gray-200 text-gray-700 px-3 py-2 rounded text-sm font-bold">Cancelar</button>}
-                </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
         )}
 
         {/* --- SERVICES TAB --- */}
-        {!loading && activeTab === 'services' && (
-          <div>
+        {activeTab === 'services' && (
+          <div className="animate-fade-in">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-slate-800">{user.is_admin ? 'Menu de Serviços' : 'Meus Serviços'}</h2>
+              <h2 className="text-xl font-bold text-slate-800">Gerenciar Serviços</h2>
               {user.is_admin && (
-                <button onClick={() => openServiceModal(null)} className="bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-rose-700">
-                  <Icons.Add className="w-4 h-4" /> Adicionar Serviço
+                <button onClick={() => openServiceModal()} className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2">
+                  <Icons.Add className="w-4 h-4"/> Novo Serviço
                 </button>
               )}
             </div>
+            
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {services.length === 0 && <p className="col-span-3 text-center text-gray-500">Nenhum serviço encontrado.</p>}
-              {services.map(s => (
-                <div key={s.id} className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200 group relative">
-                   {user.is_admin && (
-                     <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                        <button onClick={() => openServiceModal(s)} className="bg-blue-500 text-white p-2 rounded-full shadow"><Icons.Admin className="w-4 h-4"/></button>
-                        <button onClick={() => deleteService(s.id)} className="bg-red-500 text-white p-2 rounded-full shadow"><Icons.Delete className="w-4 h-4"/></button>
+              {services.map(service => (
+                <div key={service.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden group">
+                  <div className="h-40 bg-gray-100 overflow-hidden relative">
+                     <img src={service.image_url} className="w-full h-full object-cover group-hover:scale-105 transition" alt={service.name} />
+                     <div className="absolute top-2 right-2 bg-white/90 px-2 py-1 rounded text-xs font-bold shadow-sm">
+                       R$ {service.price}
                      </div>
-                   )}
-                   <div className="h-40 bg-gray-200"><img src={s.image_url} alt={s.name} className="w-full h-full object-cover"/></div>
-                   <div className="p-4">
-                     <h3 className="font-bold text-lg">{s.name}</h3>
-                     <p className="text-sm text-gray-500 mb-2">{s.description}</p>
-                     <div className="flex items-center justify-between text-xs font-bold text-gray-400">
-                       <span>{s.duration_minutes} min</span>
-                       <span className="text-green-600 text-sm">R$ {s.price}</span>
-                     </div>
-                   </div>
+                  </div>
+                  <div className="p-5">
+                    <h3 className="font-bold text-lg text-slate-800 mb-1">{service.name}</h3>
+                    <p className="text-xs text-gray-500 mb-4 line-clamp-2">{service.description}</p>
+                    <div className="flex justify-between items-center mt-4">
+                       <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{service.duration_minutes} min</span>
+                       {user.is_admin && (
+                         <div className="flex gap-2">
+                           <button onClick={() => openServiceModal(service)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded"><Icons.Admin className="w-4 h-4"/></button>
+                           <button onClick={() => handleDelete('services', service.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded"><Icons.Delete className="w-4 h-4"/></button>
+                         </div>
+                       )}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* --- PROFESSIONALS TAB (Admin Only) --- */}
-        {!loading && activeTab === 'professionals' && user.is_admin && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-slate-800">Equipe</h2>
-              <button onClick={() => openProModal(null)} className="bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-rose-700">
-                <Icons.Add className="w-4 h-4" /> Adicionar Profissional
+        {/* --- PROFESSIONALS TAB --- */}
+        {activeTab === 'professionals' && user.is_admin && (
+          <div className="animate-fade-in">
+             <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold text-slate-800">Equipe Profissional</h2>
+              <button onClick={() => openProModal()} className="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2">
+                <Icons.Add className="w-4 h-4"/> Novo Profissional
               </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               {professionals.map(p => (
-                 <div key={p.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center relative group">
-                    <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                      <button onClick={() => openProModal(p)} className="bg-blue-100 text-blue-600 p-2 rounded-full hover:bg-blue-200"><Icons.Admin className="w-4 h-4"/></button>
-                      <button onClick={() => deletePro(p.id)} className="bg-red-100 text-red-600 p-2 rounded-full hover:bg-red-200"><Icons.Delete className="w-4 h-4"/></button>
-                   </div>
-                   <img src={p.photo_url} alt={p.name} className="w-24 h-24 rounded-full mx-auto mb-4 object-cover"/>
-                   <h3 className="font-bold text-lg">{p.name}</h3>
-                   <p className="text-rose-500 text-sm font-medium mb-1">{p.role}</p>
-                   {p.is_admin && <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded font-bold">Admin</span>}
-                   
-                   <button onClick={() => openScheduleEditor(p)} className="w-full bg-slate-800 text-white py-2 rounded-lg text-sm hover:bg-slate-900 transition mt-4">Gerenciar Agenda</button>
-                 </div>
-               ))}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {professionals.map(pro => (
+                <div key={pro.id} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex items-start gap-4">
+                  <img src={pro.photo_url} alt={pro.name} className="w-16 h-16 rounded-full object-cover border-2 border-rose-100" />
+                  <div className="flex-1">
+                    <h3 className="font-bold text-lg text-slate-800">{pro.name}</h3>
+                    <p className="text-sm text-rose-600 font-medium mb-1">{pro.role}</p>
+                    <p className="text-xs text-gray-500 mb-4">{pro.email}</p>
+                    <div className="flex gap-2">
+                       <button 
+                        onClick={() => openScheduleModal(pro)}
+                        className="text-xs font-bold bg-slate-800 text-white px-3 py-1.5 rounded hover:bg-slate-700 transition"
+                       >
+                         Gerenciar Agenda
+                       </button>
+                       <button onClick={() => openProModal(pro)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded"><Icons.Admin className="w-4 h-4"/></button>
+                       <button onClick={() => handleDelete('professionals', pro.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded"><Icons.Delete className="w-4 h-4"/></button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
+        
+        {/* If user is Pro (not admin), allow them to edit their own schedule */}
+        {!user.is_admin && (
+           <div className="fixed bottom-8 right-8">
+             <button 
+               onClick={() => openScheduleModal(user)}
+               className="bg-slate-800 text-white px-6 py-3 rounded-full shadow-xl font-bold flex items-center gap-2 hover:bg-slate-700 transition"
+             >
+               <Icons.Clock className="w-5 h-5" /> Meu Horário
+             </button>
+           </div>
+        )}
+
       </main>
 
-      {/* --- MODAL: SERVICE (ADD/EDIT) --- */}
-      {showServiceModal && editingService && user.is_admin && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
-             <div className="bg-slate-900 text-white p-4 flex justify-between items-center sticky top-0 z-20 shrink-0">
-               <h3 className="font-bold">{editingService.id ? 'Editar Serviço' : 'Novo Serviço'}</h3>
-               <button onClick={() => setShowServiceModal(false)}><Icons.X/></button>
-             </div>
-             <div className="p-6 space-y-4">
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                 <input className="border p-2 rounded w-full" placeholder="Nome" value={editingService.name} onChange={e => setEditingService({...editingService, name: e.target.value})} />
-                 <input className="border p-2 rounded w-full" type="number" placeholder="Preço (R$)" value={editingService.price} onChange={e => setEditingService({...editingService, price: parseFloat(e.target.value)})} />
-                 <input className="border p-2 rounded w-full" type="number" placeholder="Duração (min)" value={editingService.duration_minutes} onChange={e => setEditingService({...editingService, duration_minutes: parseInt(e.target.value)})} />
-                 <input className="border p-2 rounded w-full" placeholder="Chave Pix" value={editingService.pix_key} onChange={e => setEditingService({...editingService, pix_key: e.target.value})} />
-                 <div className="col-span-1 md:col-span-2">
-                    <label className="block text-xs text-gray-500 mb-1">Capa do Serviço (URL)</label>
-                    <input className="border p-2 rounded w-full" placeholder="URL da Imagem de Capa" value={editingService.image_url} onChange={e => setEditingService({...editingService, image_url: e.target.value})} />
+      {/* --- SERVICE MODAL --- */}
+      {showServiceModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 relative">
+            <button onClick={() => setShowServiceModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><Icons.X /></button>
+            <h2 className="text-xl font-bold mb-6">{editingService?.id ? 'Editar Serviço' : 'Novo Serviço'}</h2>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
+                   <input 
+                     type="text" className="w-full border rounded p-2" 
+                     value={editingService?.name} onChange={e => setEditingService({...editingService, name: e.target.value})}
+                   />
                  </div>
-                 
-                 {/* QR Code Upload Section - Explicitly Added */}
-                 <div className="col-span-1 md:col-span-2 border-2 border-dashed border-rose-200 p-4 rounded-xl bg-rose-50/50">
-                   <label className="block text-sm font-bold text-rose-800 mb-2 flex items-center gap-2">
-                     <Icons.Upload className="w-4 h-4"/> Imagem do QR Code Pix (Pagamento)
-                   </label>
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Preço (R$)</label>
+                   <input 
+                     type="number" className="w-full border rounded p-2" 
+                     value={editingService?.price} onChange={e => setEditingService({...editingService, price: parseFloat(e.target.value)})}
+                   />
+                 </div>
+              </div>
+              
+              <div>
+                 <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Descrição</label>
+                 <textarea 
+                   className="w-full border rounded p-2 h-20" 
+                   value={editingService?.description} onChange={e => setEditingService({...editingService, description: e.target.value})}
+                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Duração (min)</label>
+                   <input 
+                     type="number" className="w-full border rounded p-2" 
+                     value={editingService?.duration_minutes} onChange={e => setEditingService({...editingService, duration_minutes: parseInt(e.target.value)})}
+                   />
+                 </div>
+                 <div>
+                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Categoria</label>
+                   <input 
+                     type="text" className="w-full border rounded p-2" 
+                     value={editingService?.category} onChange={e => setEditingService({...editingService, category: e.target.value})}
+                   />
+                 </div>
+              </div>
+
+              <div className="border-t pt-4 mt-4">
+                 <h3 className="font-bold text-sm mb-3 text-slate-800">Pagamento Pix</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div>
+                     <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Chave Pix</label>
+                     <input 
+                       type="text" className="w-full border rounded p-2 bg-yellow-50 border-yellow-200" placeholder="Ex: email@pix.com"
+                       value={editingService?.pix_key} onChange={e => setEditingService({...editingService, pix_key: e.target.value})}
+                     />
+                   </div>
                    
-                   <div className="flex flex-col gap-3">
-                     <div className="flex items-center gap-3">
-                        <label className={`cursor-pointer bg-rose-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-rose-700 transition shadow ${uploading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                          {uploading ? <Icons.Loading className="animate-spin w-4 h-4"/> : <Icons.Upload className="w-4 h-4"/>}
-                          {uploading ? 'Enviando...' : 'Escolher Arquivo'}
-                          <input 
-                            type="file" 
-                            accept="image/*" 
-                            onChange={handleFileUpload}
-                            disabled={uploading}
-                            className="hidden"
-                          />
-                        </label>
-                        <span className="text-xs text-gray-500">ou</span>
+                   {/* QR CODE UPLOAD SECTION */}
+                   <div>
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Imagem QR Code</label>
+                      <div className="flex items-center gap-2">
+                         <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded text-xs font-bold flex items-center gap-2 transition">
+                           <Icons.Upload className="w-4 h-4"/> Upload Imagem
+                           <input type="file" accept="image/*" className="hidden" onChange={handleQrUpload} disabled={uploading} />
+                         </label>
+                         {uploading && <Icons.Loading className="animate-spin text-rose-600 w-4 h-4"/>}
+                      </div>
+                      <input 
+                        type="text" 
+                        placeholder="Ou cole URL da imagem..."
+                        className="w-full border rounded p-2 text-xs mt-2" 
+                        value={editingService?.pix_qr_url || ''} 
+                        onChange={e => setEditingService({...editingService, pix_qr_url: e.target.value})}
+                      />
+                   </div>
+                 </div>
+                 {editingService?.pix_qr_url && (
+                   <div className="mt-2 p-2 border rounded bg-gray-50 inline-block">
+                      <img src={editingService.pix_qr_url} alt="QR Preview" className="h-24 w-24 object-contain" />
+                   </div>
+                 )}
+              </div>
+              
+              <div className="border-t pt-4 mt-4">
+                 <h3 className="font-bold text-sm mb-3 text-slate-800">Profissionais Habilitados</h3>
+                 <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 border rounded bg-gray-50">
+                    {professionals.map(pro => (
+                      <label key={pro.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-100 p-1 rounded">
                         <input 
-                          className="border p-2 rounded flex-1 text-sm bg-white" 
-                          placeholder="Cole a URL da imagem aqui se preferir" 
-                          value={editingService.pix_qr_url || ''} 
-                          onChange={e => setEditingService(prev => prev ? ({...prev, pix_qr_url: e.target.value}) : null)} 
+                          type="checkbox" 
+                          checked={selectedProsForService.has(pro.id)}
+                          onChange={e => {
+                            const newSet = new Set(selectedProsForService);
+                            e.target.checked ? newSet.add(pro.id) : newSet.delete(pro.id);
+                            setSelectedProsForService(newSet);
+                          }}
+                          className="rounded text-rose-600 focus:ring-rose-500"
                         />
-                     </div>
-                     
-                     {editingService.pix_qr_url && (
-                       <div className="mt-2 flex items-center gap-4 bg-white p-2 rounded border">
-                         <img src={editingService.pix_qr_url} alt="QR Preview" className="w-16 h-16 object-contain border bg-gray-50" />
-                         <div>
-                            <p className="text-xs font-bold text-green-600">Imagem vinculada com sucesso!</p>
-                            <p className="text-xs text-gray-400 break-all line-clamp-1">{editingService.pix_qr_url}</p>
-                         </div>
-                       </div>
-                     )}
-                     {!editingService.pix_qr_url && (
-                        <p className="text-xs text-gray-500 italic">Se nenhuma imagem for enviada, um QR Code genérico será gerado automaticamente baseado na chave Pix.</p>
-                     )}
-                   </div>
+                        <span className="text-sm">{pro.name}</span>
+                      </label>
+                    ))}
                  </div>
+              </div>
 
-                 <div className="col-span-1 md:col-span-2">
-                    <label className="block text-xs text-gray-500 mb-1">Descrição</label>
-                    <textarea className="border p-2 rounded w-full" placeholder="Detalhes do serviço..." value={editingService.description} onChange={e => setEditingService({...editingService, description: e.target.value})} />
-                 </div>
-               </div>
-               
-               <div className="border-t pt-4">
-                 <h4 className="font-bold mb-3 text-slate-700">Profissionais Habilitados</h4>
-                 <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                   {professionals.map(p => (
-                     <label key={p.id} className="flex items-center gap-2 p-2 border rounded hover:bg-gray-50 cursor-pointer transition">
-                       <input 
-                        type="checkbox" 
-                        checked={selectedProsForService.has(p.id)} 
-                        onChange={() => toggleProSelection(p.id)}
-                        className="w-4 h-4 accent-rose-600 rounded"
-                       />
-                       <span className="text-sm">{p.name}</span>
-                     </label>
-                   ))}
-                 </div>
-               </div>
-             </div>
-             <div className="p-4 border-t flex justify-end gap-2 bg-gray-50 sticky bottom-0 rounded-b-2xl">
-               <button onClick={() => setShowServiceModal(false)} className="px-4 py-2 text-gray-600 font-medium hover:text-gray-800">Cancelar</button>
-               <button onClick={saveService} disabled={saving} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-rose-700 transition shadow-lg">{saving ? 'Salvando...' : 'Salvar Serviço'}</button>
-             </div>
-           </div>
+              <div className="border-t pt-6 flex justify-end gap-3">
+                <button onClick={() => setShowServiceModal(false)} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100 font-bold">Cancelar</button>
+                <button 
+                  onClick={handleSaveService} 
+                  disabled={saving}
+                  className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"
+                >
+                  {saving && <Icons.Loading className="animate-spin w-4 h-4" />} Salvar Serviço
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* --- MODAL: PROFESSIONAL (ADD/EDIT PROFILE) --- */}
-      {showProModal && editingProProfile && user.is_admin && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-           <div className="bg-white rounded-2xl w-full max-w-lg">
-             <div className="bg-slate-900 text-white p-4 flex justify-between items-center rounded-t-2xl">
-               <h3 className="font-bold">{editingProProfile.id ? 'Editar Perfil' : 'Novo Profissional'}</h3>
-               <button onClick={() => setShowProModal(false)}><Icons.X/></button>
-             </div>
-             <div className="p-6 space-y-4">
-                 <input className="border p-2 rounded w-full" placeholder="Nome Completo" value={editingProProfile.name} onChange={e => setEditingProProfile({...editingProProfile, name: e.target.value})} />
-                 <input className="border p-2 rounded w-full" placeholder="Cargo / Especialidade" value={editingProProfile.role} onChange={e => setEditingProProfile({...editingProProfile, role: e.target.value})} />
-                 <input className="border p-2 rounded w-full" placeholder="URL da Foto" value={editingProProfile.photo_url} onChange={e => setEditingProProfile({...editingProProfile, photo_url: e.target.value})} />
-                 <textarea className="border p-2 rounded w-full h-24" placeholder="Biografia curta" value={editingProProfile.bio} onChange={e => setEditingProProfile({...editingProProfile, bio: e.target.value})} />
-                 
-                 <div className="bg-gray-50 p-3 rounded-lg border">
-                   <h4 className="font-bold text-sm mb-2 text-gray-500 uppercase">Acesso ao Sistema</h4>
-                   <div className="space-y-2">
-                     <input className="border p-2 rounded w-full text-sm" placeholder="Email (Login)" value={editingProProfile.email || ''} onChange={e => setEditingProProfile({...editingProProfile, email: e.target.value})} />
-                     <input className="border p-2 rounded w-full text-sm" placeholder="Senha" value={editingProProfile.password || ''} onChange={e => setEditingProProfile({...editingProProfile, password: e.target.value})} />
-                     <label className="flex items-center gap-2 mt-2">
-                       <input type="checkbox" checked={editingProProfile.is_admin || false} onChange={e => setEditingProProfile({...editingProProfile, is_admin: e.target.checked})} className="accent-rose-600"/>
-                       <span className="text-sm font-bold text-slate-700">Acesso de Administrador</span>
-                     </label>
-                   </div>
+      {/* --- PROFESSIONAL MODAL --- */}
+      {showProModal && (
+         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+           <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl p-6 relative">
+             <button onClick={() => setShowProModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><Icons.X /></button>
+             <h2 className="text-xl font-bold mb-6">{editingProProfile?.id ? 'Editar Profissional' : 'Novo Profissional'}</h2>
+             
+             <div className="space-y-4">
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
+                  <input 
+                    type="text" className="w-full border rounded p-2"
+                    value={editingProProfile?.name} onChange={e => setEditingProProfile({...editingProProfile, name: e.target.value})}
+                  />
+               </div>
+               <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Cargo</label>
+                  <input 
+                    type="text" className="w-full border rounded p-2"
+                    value={editingProProfile?.role} onChange={e => setEditingProProfile({...editingProProfile, role: e.target.value})}
+                  />
+               </div>
+               <div className="grid grid-cols-2 gap-4">
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Email (Login)</label>
+                    <input 
+                      type="email" className="w-full border rounded p-2"
+                      value={editingProProfile?.email} onChange={e => setEditingProProfile({...editingProProfile, email: e.target.value})}
+                    />
                  </div>
-             </div>
-             <div className="p-4 border-t flex justify-end gap-2 bg-gray-50 rounded-b-2xl">
-               <button onClick={() => setShowProModal(false)} className="px-4 py-2 text-gray-600">Cancelar</button>
-               <button onClick={saveProProfile} disabled={saving} className="bg-rose-600 text-white px-6 py-2 rounded-lg font-bold">{saving ? 'Salvando...' : 'Salvar'}</button>
+                 <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Senha</label>
+                    <input 
+                      type="password" className="w-full border rounded p-2" placeholder="Nova senha..."
+                      value={editingProProfile?.password} onChange={e => setEditingProProfile({...editingProProfile, password: e.target.value})}
+                    />
+                 </div>
+               </div>
+               <div>
+                 <label className="flex items-center gap-2 mt-2">
+                   <input 
+                     type="checkbox" 
+                     checked={editingProProfile?.is_admin || false}
+                     onChange={e => setEditingProProfile({...editingProProfile, is_admin: e.target.checked})}
+                   />
+                   <span className="text-sm font-bold text-slate-700">Acesso Administrador</span>
+                 </label>
+               </div>
+
+               <div className="border-t pt-6 flex justify-end gap-3">
+                <button onClick={() => setShowProModal(false)} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100 font-bold">Cancelar</button>
+                <button 
+                  onClick={handleSavePro} 
+                  disabled={saving}
+                  className="bg-rose-600 hover:bg-rose-700 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"
+                >
+                  {saving && <Icons.Loading className="animate-spin w-4 h-4" />} Salvar
+                </button>
+              </div>
              </div>
            </div>
-        </div>
+         </div>
       )}
 
-      {/* --- MODAL: SCHEDULE EDITOR (Shared) --- */}
+      {/* --- SCHEDULE MODAL --- */}
       {editingProSchedule && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden max-h-[90vh] flex flex-col">
-            <div className="bg-slate-900 text-white p-6 flex justify-between items-center shrink-0">
-              <h3 className="text-xl font-bold flex items-center gap-2"><Icons.Clock className="w-6 h-6 text-rose-500" /> Agenda: {editingProSchedule.name}</h3>
-              <button onClick={() => setEditingProSchedule(null)} className="text-slate-400 hover:text-white"><Icons.X className="w-6 h-6" /></button>
-            </div>
-            <div className="p-6 overflow-y-auto flex-1 space-y-6">
-                {scheduleForm.map((day, dayIndex) => (
-                  <div key={day.day_of_week} className="border-b border-gray-100 pb-4 last:border-0">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <input type="checkbox" checked={day.is_available} onChange={() => toggleDayAvailability(dayIndex)} className="w-5 h-5 accent-rose-600 rounded cursor-pointer"/>
-                        <span className={`font-bold text-lg ${day.is_available ? 'text-slate-800' : 'text-gray-400'}`}>{DAYS_OF_WEEK[day.day_of_week || 0]}</span>
-                      </div>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 relative">
+            <button onClick={() => setEditingProSchedule(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><Icons.X /></button>
+            <h2 className="text-xl font-bold mb-1">Gerenciar Agenda</h2>
+            <p className="text-sm text-gray-500 mb-6">Defina os horários de atendimento para <span className="text-rose-600 font-bold">{editingProSchedule.name}</span></p>
+
+            <div className="space-y-6">
+              {scheduleForm.map((day, index) => (
+                <div key={index} className="border-b border-gray-100 pb-4 last:border-0">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" className="sr-only peer"
+                          checked={day.is_available}
+                          onChange={e => {
+                             const newForm = [...scheduleForm];
+                             newForm[index].is_available = e.target.checked;
+                             setScheduleForm(newForm);
+                          }}
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                      </label>
+                      <span className={`font-bold ${day.is_available ? 'text-slate-800' : 'text-gray-400'}`}>
+                        {DAYS_OF_WEEK[index]}
+                      </span>
                     </div>
-                    {day.is_available && (
-                      <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-8 gap-2 pl-8">
-                        {GENERATED_HOURS.map(slot => (
-                            <button key={slot} onClick={() => toggleTimeSlot(dayIndex, slot)} className={`py-1.5 px-2 rounded-md text-sm font-medium transition ${day.time_slots?.includes(slot) ? 'bg-rose-600 text-white shadow-md transform scale-105' : 'bg-white border border-gray-200 text-gray-600 hover:border-rose-300 hover:bg-rose-50'}`}>{slot}</button>
-                        ))}
-                      </div>
-                    )}
                   </div>
-                ))}
+                  
+                  {day.is_available && (
+                    <div className="ml-14 grid grid-cols-4 md:grid-cols-8 gap-2">
+                       {GENERATED_HOURS.map(hour => {
+                         const isSelected = day.time_slots?.includes(hour);
+                         return (
+                           <button
+                             key={hour}
+                             onClick={() => toggleSlot(index, hour)}
+                             className={`text-xs py-1.5 px-1 rounded border transition ${
+                               isSelected 
+                               ? 'bg-rose-600 text-white border-rose-600' 
+                               : 'bg-white text-gray-500 border-gray-200 hover:border-rose-300'
+                             }`}
+                           >
+                             {hour}
+                           </button>
+                         )
+                       })}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-            <div className="p-6 border-t border-gray-200 bg-gray-50 flex justify-end gap-3 shrink-0">
-              <button onClick={() => setEditingProSchedule(null)} className="px-6 py-2 rounded-lg font-bold text-slate-600 hover:bg-slate-200 transition">Cancelar</button>
-              <button onClick={saveSchedule} disabled={saving} className="bg-rose-600 hover:bg-rose-700 text-white px-8 py-2 rounded-lg font-bold shadow-lg disabled:opacity-50 transition">{saving ? 'Salvando...' : 'Salvar Agenda'}</button>
+
+            <div className="sticky bottom-0 bg-white pt-4 mt-4 border-t flex justify-end gap-3">
+              <button onClick={() => setEditingProSchedule(null)} className="px-4 py-2 rounded-lg text-gray-600 hover:bg-gray-100 font-bold">Cancelar</button>
+              <button 
+                onClick={handleSaveSchedule} 
+                disabled={saving}
+                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold flex items-center gap-2"
+              >
+                {saving && <Icons.Loading className="animate-spin w-4 h-4" />} Salvar Horários
+              </button>
             </div>
           </div>
         </div>

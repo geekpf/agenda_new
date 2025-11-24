@@ -1,3 +1,4 @@
+
 export interface Service {
   id: string;
   name: string;
@@ -39,8 +40,9 @@ export interface Appointment {
   customer_phone: string;
   start_time: string; // ISO string
   end_time: string; // ISO string
-  status: 'pending' | 'confirmed' | 'rejected' | 'cancelled';
+  status: 'pending' | 'waiting_payment' | 'confirmed' | 'rejected' | 'cancelled';
   notes?: string;
+  payment_id?: string;
   // Joins
   services?: Service;
   professionals?: Professional;
