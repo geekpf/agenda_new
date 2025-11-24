@@ -1,5 +1,5 @@
 {
-  "name": "aura-agendamento-estético",
+  "name": "aura-agendamento",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,16 +9,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@supabase/supabase-js": "^2.84.0",
-    "lucide-react": "^0.554.0",
-    "date-fns": "^4.1.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "lucide-react": "^0.344.0",
+    "date-fns": "^3.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.2.2",
+    "vite": "^5.1.6"
   }
 }
